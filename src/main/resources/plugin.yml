@@ -1,0 +1,10 @@
+name: BlobProperties
+main: io.github.anjoismysign.blobproperties.BlobProperties
+version: ${project.version}
+authir: [ promorrom ]
+api-version: 1.21.4
+depend: [ BlobLib ]
+commands:
+  properties:
+    description: base command
+    aliases: [ bp ]

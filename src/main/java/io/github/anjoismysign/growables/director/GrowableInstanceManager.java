@@ -23,6 +23,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -33,11 +34,19 @@ import java.util.Set;
 public class GrowableInstanceManager extends GenericManager<Growables, GrowablesManagerDirector> implements Listener {
     private final BukkitIdentityManager<GrowableInstance> identityManager;
     private final Set<SimpleDevelopable> developables = new HashSet<>();
+    private final BukkitTask tickTask;
 
     public GrowableInstanceManager(GrowablesManagerDirector director) {
         super(director);
         identityManager = PluginManager.getInstance().addIdentityManager(GrowableInstance.Info.class, getPlugin(), "GrowableInstance", true);
         Bukkit.getPluginManager().registerEvents(this, getPlugin());
+
+        // schedule a shared random-tick task
+        tickTask = Bukkit.getScheduler().runTaskTimer(getPlugin(), () -> {
+            developables.forEach(SimpleDevelopable::randomTick);
+        }, 0L, 20L);
+
+        // initial load
         Bukkit.getScheduler().runTask(getPlugin(), this::reload);
     }
 
@@ -55,6 +64,10 @@ public class GrowableInstanceManager extends GenericManager<Growables, Growables
     }
 
     public void unload(){
+        // stop the shared task and clear all entities
+        if (tickTask != null) {
+            tickTask.cancel();
+        }
         developables.forEach(SimpleDevelopable::clear);
     }
 
@@ -109,9 +122,6 @@ public class GrowableInstanceManager extends GenericManager<Growables, Growables
         if (developable == null) {
             return;
         }
-        if (!developable.taskPointer()[0].isCancelled()){
-            return;
-        }
         Player player = (Player) event.getDamager();
         DevelopableHarvestEvent harvestEvent = new DevelopableHarvestEvent(developable, player);
         Bukkit.getPluginManager().callEvent(harvestEvent);
@@ -120,5 +130,4 @@ public class GrowableInstanceManager extends GenericManager<Growables, Growables
         }
         developable.harvest(player, entity.getLocation());
     }
-
 }

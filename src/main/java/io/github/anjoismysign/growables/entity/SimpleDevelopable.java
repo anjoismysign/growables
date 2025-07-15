@@ -6,6 +6,7 @@ import io.github.anjoismysign.growables.Growables;
 import io.github.anjoismysign.growables.api.Developable;
 import io.github.anjoismysign.growables.api.event.DevelopableGrowEvent;
 import org.bukkit.Bukkit;
+import org.bukkit.GameRule;
 import org.bukkit.Location;
 import org.bukkit.block.structure.Mirror;
 import org.bukkit.entity.Entity;
@@ -13,8 +14,6 @@ import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Interaction;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.TextDisplay;
-import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -23,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Physical representation of a growable plant in the Bukkit world.
@@ -36,10 +36,9 @@ public record SimpleDevelopable(
         @NotNull Interaction[] boxPointer,
         @NotNull Stage[] stagePointer,
         @NotNull List<Entity> entities,
-        int[] timerPointer,
         @NotNull Hologram hologram,
-        BukkitTask[] taskPointer
-) implements Developable {
+        @NotNull Random random
+        ) implements Developable {
 
     public static SimpleDevelopable of(@NotNull GrowableInstance instance) {
         Location baseLocation = instance.locatable().toLocation().toCenterLocation();
@@ -60,23 +59,21 @@ public record SimpleDevelopable(
         Interaction interaction = (Interaction)
                 baseLocation.getWorld().spawnEntity(baseLocation, EntityType.INTERACTION);
         interaction.setPersistent(false);
-        interaction.setInteractionHeight(0.00001F);
-
-        List<Entity> entities = new ArrayList<>();
-        entities.add(interaction);
 
         Interaction[] boxPointer = new Interaction[]{interaction};
         Stage[] stagePointer = new Stage[]{initialStage};
-        int[] timerPointer = new int[]{0};
-        BukkitTask[] taskPointer = new BukkitTask[]{null};
 
         SimpleDevelopable developable = new SimpleDevelopable(
-                instance, boxPointer, stagePointer, entities, timerPointer, hologram, taskPointer
+                instance,
+                boxPointer,
+                stagePointer,
+                new ArrayList<>(),
+                hologram,
+                new Random()
         );
 
-        developable.restartTask();
+        developable.growToFullStage();
         hologram.update(developable);
-
         return developable;
     }
 
@@ -94,7 +91,7 @@ public record SimpleDevelopable(
                         Mirror.NONE,
                         0,
                         1,
-                        new Random(),
+                        ThreadLocalRandom.current(),
                         Integer.MAX_VALUE,
                         1,
                         blockState -> {
@@ -106,78 +103,39 @@ public record SimpleDevelopable(
                 );
     }
 
-    /**
-     * Starts or restarts the growth task.
-     * Advances through the first (N–1) stages proportionally,
-     * then calls growToFullStage() at 100% and stops.
-     */
-    private void restartTask() {
-        if (taskPointer[0] != null) {
-            taskPointer[0].cancel();
+    /** Called by the shared task in the manager to simulate random-tick growth. */
+    public void randomTick() {
+        int currentIndex = getStageIndex();
+        int lastIndex = getLastStageIndex();
+        if (currentIndex >= lastIndex){
+            return;
         }
 
-        List<Stage> allStages = owner.getGrowableOrThrow().stages();
-        int totalStages = allStages.size();
-        int finalStageIndex = totalStages - 1;
-        int growthStageCount = finalStageIndex;
+        Stage current = stagePointer[0];
+        int length = current.getLength();
 
-        // Sum only the lengths of the first (totalStages - 1) stages
-        int totalTicksForProgress = allStages.subList(0, growthStageCount).stream()
-                .mapToInt(Stage::getLength)
-                .sum();
-
-        timerPointer[0] = 0;
-
-        taskPointer[0] = new BukkitRunnable() {
-            private int lastAppliedStageIndex = -1;
-
-            @Override
-            public void run() {
-                int currentTick = timerPointer[0]++;
-
-                if (currentTick % 10 == 0) {
-                    hologram.update(SimpleDevelopable.this);
-                }
-
-                int cappedTick = Math.min(currentTick, totalTicksForProgress);
-                double progressFraction = (double) cappedTick / totalTicksForProgress;
-
-                int desiredStageIndex;
-                if (cappedTick >= totalTicksForProgress) {
-                    // At or past 100%, finalize growth
-                    desiredStageIndex = finalStageIndex;
-                } else {
-                    desiredStageIndex = (int) (progressFraction * growthStageCount);
-                }
-
-                if (desiredStageIndex != lastAppliedStageIndex) {
-                    // If we hit the final stage, use growToFullStage()
-                    if (desiredStageIndex == finalStageIndex) {
-                        growToFullStage();
-                        this.cancel();
-                        return;
-                    }
-                    setStage(desiredStageIndex);
-                    lastAppliedStageIndex = desiredStageIndex;
-                }
-            }
-        }.runTaskTimer(Growables.getInstance(), 0L, 1L);
+        @Nullable Integer randomTickSpeed = owner.locatable().getWorld().getGameRuleValue(GameRule.RANDOM_TICK_SPEED);
+        randomTickSpeed = randomTickSpeed == null ? 3 : randomTickSpeed;
+        randomTickSpeed = randomTickSpeed == 0 ? 3 : randomTickSpeed;
+        int chance = length / randomTickSpeed;
+        if (chance > 0 && random.nextInt(chance) == 0) {
+            advanceOneStage();
+            hologram.update(this);
+        }
     }
 
     public void clear() {
-        taskPointer[0].cancel();
-        removeEntitiesExceptHitbox();
+        removeEntities();
         getHitbox().remove();
-        @Nullable TextDisplay display = hologram().display();
+        @Nullable TextDisplay display = hologram.display();
         if (display == null) {
             return;
         }
         display.remove();
     }
 
-    private void removeEntitiesExceptHitbox() {
+    private void removeEntities() {
         entities.stream()
-                .filter(entity -> entity.getType() != EntityType.INTERACTION)
                 .toList()
                 .forEach(entity -> {
                     entities.remove(entity);
@@ -192,18 +150,21 @@ public record SimpleDevelopable(
 
     public boolean advanceOneStage() {
         int currentIndex = getStageIndex();
-        int lastIndex = owner.getGrowableOrThrow().totalStages() - 1;
-        if (currentIndex >= lastIndex) {
-            taskPointer[0].cancel();
+        int lastIndex = getLastStageIndex();
+        if (currentIndex > lastIndex) {
             return false;
         }
-        setStage(currentIndex + 1);
+        int desiredIndex = currentIndex+1;
+        if (desiredIndex == lastIndex){
+            growToFullStage();
+            return true;
+        }
+        setStage(desiredIndex);
         return true;
     }
 
     public void growToFullStage() {
-        taskPointer[0].cancel();
-        setStage(owner.getGrowableOrThrow().totalStages() - 1);
+        setStage(getLastStageIndex());
         getHitbox().setInteractionHeight(owner.getGrowableOrThrow().height());
     }
 
@@ -218,7 +179,6 @@ public record SimpleDevelopable(
     public void resetGrowth() {
         setStage(0);
         getHitbox().setInteractionHeight(0.00001f);
-        restartTask();
         hologram.update(this);
     }
 
@@ -226,7 +186,7 @@ public record SimpleDevelopable(
         DevelopableGrowEvent growEvent = new DevelopableGrowEvent(this, stageIndex);
         Bukkit.getPluginManager().callEvent(growEvent);
 
-        removeEntitiesExceptHitbox();
+        removeEntities();
 
         Stage newStage = owner.getGrowableOrThrow()
                 .stages().get(growEvent.getStage());
@@ -236,20 +196,10 @@ public record SimpleDevelopable(
     }
 
     public String growthProgressBar() {
-        List<Stage> allStages = owner.getGrowableOrThrow().stages();
-        int finalStageIndex = allStages.size() - 1;
-        int growthStageCount = finalStageIndex;
-
-        // Sum only the first N–1 stages for “progress”
-        int totalTicksForProgress = allStages.subList(0, growthStageCount).stream()
-                .mapToInt(Stage::getLength)
-                .sum();
-
-        // Count completed ticks, capped at totalTicksForProgress
-        int completedTicks = Math.min(timerPointer[0], totalTicksForProgress);
-
-        double percentage = ((double) completedTicks / totalTicksForProgress) * 100.0;
-        return new DecimalFormat("#,##0.##").format(percentage);
+        // optional: you can still compute an approximate progress display if desired
+        return new DecimalFormat("#,##0.##").format(
+                (double) getStageIndex() / getLastStageIndex() * 100.0
+        );
     }
 
     public void harvest(@NotNull Player player,

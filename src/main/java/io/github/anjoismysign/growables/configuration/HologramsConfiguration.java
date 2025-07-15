@@ -1,12 +1,13 @@
-package io.github.anjoismysign.growables.director.config;
+package io.github.anjoismysign.growables.configuration;
 
 import java.util.List;
 
-public class HologramConfig {
+public class HologramsConfiguration {
     private double y;
     private List<String> lines;
+    private boolean enabled;
 
-    public HologramConfig() {}
+    public HologramsConfiguration() {}
 
     public String getText() {
         return String.join("\n", lines);
@@ -26,5 +27,13 @@ public class HologramConfig {
 
     public void setLines(List<String> lines) {
         this.lines = lines;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
     }
 }

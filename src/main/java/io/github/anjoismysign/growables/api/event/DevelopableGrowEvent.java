@@ -1,4 +1,4 @@
-package io.github.anjoismysign.growables.event;
+package io.github.anjoismysign.growables.api.event;
 
 import io.github.anjoismysign.growables.api.Developable;
 import org.bukkit.event.HandlerList;

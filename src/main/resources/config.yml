@@ -7,5 +7,4 @@ Database:
   Username: admin
   Password: password
 Options:
-  numberFormat: VAULT
-  PendingInvitesExpiration: 60
+  Tiny-Debug: false

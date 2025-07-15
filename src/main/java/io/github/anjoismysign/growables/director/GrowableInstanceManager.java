@@ -1,178 +1,124 @@
 package io.github.anjoismysign.growables.director;
 
-import io.github.anjoismysign.bloblib.annotation.BManager;
-import io.github.anjoismysign.bloblib.entities.positionable.Locatable;
-import io.github.anjoismysign.bloblib.managers.Manager;
+import io.github.anjoismysign.bloblib.entities.GenericManager;
+import io.github.anjoismysign.bloblib.entities.translatable.TranslatableItem;
 import io.github.anjoismysign.bloblib.managers.PluginManager;
 import io.github.anjoismysign.bloblib.managers.asset.BukkitIdentityManager;
 import io.github.anjoismysign.growables.Growables;
+import io.github.anjoismysign.growables.api.event.DevelopableHarvestEvent;
 import io.github.anjoismysign.growables.entity.Growable;
-import io.github.anjoismysign.holoworld.asset.DataAsset;
+import io.github.anjoismysign.growables.entity.GrowableInstance;
+import io.github.anjoismysign.growables.entity.SimpleDevelopable;
+import io.github.anjoismysign.growables.entity.SimpleDirection;
 import io.github.anjoismysign.holoworld.asset.IdentityGeneration;
-import io.github.anjoismysign.holoworld.asset.IdentityGenerator;
 import org.bukkit.Bukkit;
-import org.bukkit.Location;
-import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Interaction;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 
-@BManager
-public class LocatableGrowableManager extends Manager {
+public class GrowableInstanceManager extends GenericManager<Growables, GrowablesManagerDirector> implements Listener {
     private final BukkitIdentityManager<GrowableInstance> identityManager;
+    private final Set<SimpleDevelopable> developables = new HashSet<>();
 
-    public LocatableGrowableManager(){
-        identityManager = PluginManager.getInstance().addIdentityManager(Info.class, Growables.getInstance(), "GrowableInstance", true);
+    public GrowableInstanceManager(GrowablesManagerDirector director) {
+        super(director);
+        identityManager = PluginManager.getInstance().addIdentityManager(GrowableInstance.Info.class, getPlugin(), "GrowableInstance", true);
+        Bukkit.getPluginManager().registerEvents(this, getPlugin());
+        Bukkit.getScheduler().runTask(getPlugin(), this::reload);
+    }
+
+    public void reload() {
+        developables.forEach(SimpleDevelopable::clear);
+        developables.clear();
+        GrowablesManagerDirector director = getManagerDirector();
+        director.getStructureTracker().reload();
+        director.getGrowableManager().identityManager.reload();
+        identityManager.reload();
+        identityManager.forEach(instance -> {
+            SimpleDevelopable developable = SimpleDevelopable.of(instance);
+            developables.add(developable);
+        });
+    }
+
+    public void unload(){
+        developables.forEach(SimpleDevelopable::clear);
+    }
+
+    public void registerDevelopable(@NotNull SimpleDevelopable developable){
+        Objects.requireNonNull(developable, "'developable' cannot be null");
+        developables.add(developable);
     }
 
     @Nullable
-    public GrowableInstance getGrowable(@NotNull String identifier){
+    public GrowableInstance get(@NotNull String identifier) {
         var generation = identityManager.fetchGeneration(identifier);
         if (generation == null)
             return null;
         return generation.asset();
     }
 
-    public void serialize(@NotNull GrowableInstance growable){
-        Objects.requireNonNull(growable, "'growable' cannot be null");
-        String identifier = growable.identifier();
-        identityManager.add(new IdentityGeneration<>(identifier, growable.info()));
+    public void serialize(@NotNull GrowableInstance instance) {
+        Objects.requireNonNull(instance, "'owner' cannot be null");
+        String identifier = instance.identifier();
+        identityManager.add(new IdentityGeneration<>(identifier, instance.info()));
     }
 
-    private static LocatableGrowableManager INSTANCE;
-
-    public static LocatableGrowableManager getInstance(){
-        if (INSTANCE == null)
-            INSTANCE = new LocatableGrowableManager();
-        return INSTANCE;
+    @EventHandler
+    public void onPlace(BlockPlaceEvent event){
+        Player player = event.getPlayer();
+        ItemStack hand = event.getItemInHand();
+        TranslatableItem item = TranslatableItem.byItemStack(hand);
+        if (item == null)
+            return;
+        String identifier = item.identifier();
+        @Nullable Growable growable = getManagerDirector().getGrowableManager().get(identifier);
+        if (growable == null)
+            return;
+        Block block = event.getBlockPlaced();
+        BlockFace facing = player.getFacing();
+        SimpleDirection direction = SimpleDirection.ofBlockFace(facing);
+        growable.instantiate(block, direction);
     }
 
-    public record GrowableInstance(@NotNull Locatable locatable,
-                                   @NotNull String growable,
-                                   @NotNull String identifier) implements DataAsset {
-
-        public Location location(){
-            return locatable.toLocation();
+    @EventHandler
+    public void onHarvest(EntityDamageByEntityEvent event) {
+        if (event.getDamager().getType() != EntityType.PLAYER)
+            return;
+        Entity entity = event.getEntity();
+        if (entity.getType() != EntityType.INTERACTION)
+            return;
+        Interaction interaction = (Interaction) entity;
+        @Nullable SimpleDevelopable developable = developables
+                .stream()
+                .filter(simpleDevelopable -> simpleDevelopable.getHitbox().getUniqueId().equals(interaction.getUniqueId()))
+                .findFirst().orElse(null);
+        if (developable == null) {
+            return;
         }
-
-        @Nullable
-        public GrowableManager.Growable getGrowable(){
-            GrowableManager.Growable growable = GrowableManager.getInstance().getGrowable(this.growable);
+        if (!developable.taskPointer()[0].isCancelled()){
+            return;
         }
-
-        public Info info(){
-            Info info = new Info();
-            info.setGrowable(growable);
-            info.setWorld(locatable.getWorld().getName());
-            info.setYaw(locatable.getYaw());
-            info.setPitch(locatable.getPitch());
-            info.setX(locatable.getX());
-            info.setY(locatable.getY());
-            info.setZ(locatable.getZ());
-            return info;
+        Player player = (Player) event.getDamager();
+        DevelopableHarvestEvent harvestEvent = new DevelopableHarvestEvent(developable, player);
+        Bukkit.getPluginManager().callEvent(harvestEvent);
+        if (harvestEvent.isCancelled()) {
+            return;
         }
-
-    }
-
-    public static class Info implements IdentityGenerator<GrowableInstance> {
-        private String world, growable;
-        private float yaw,pitch;
-        private double x,y,z;
-
-        @Override
-        public @NotNull LocatableGrowableManager.GrowableInstance generate(@NotNull String identifier) {
-            Objects.requireNonNull(world, "'world' cannot be null");
-            Objects.requireNonNull(growable, "'growable' cannot be null");
-            Locatable locatable = new Locatable() {
-                @Override
-                public double getX() {
-                    return x;
-                }
-
-                @Override
-                public double getY() {
-                    return y;
-                }
-
-                @Override
-                public double getZ() {
-                    return z;
-                }
-
-                @Override
-                public float getYaw() {
-                    return yaw;
-                }
-
-                @Override
-                public float getPitch() {
-                    return pitch;
-                }
-
-                @Override
-                public @NotNull World getWorld() {
-                    return Objects.requireNonNull(Bukkit.getWorld(world), "'"+world+"' was deleted during runtime");
-                }
-            };
-            return new GrowableInstance(locatable, growable, identifier);
-        }
-
-        public String getWorld() {
-            return world;
-        }
-
-        public void setWorld(String world) {
-            this.world = world;
-        }
-
-        public String getGrowable() {
-            return growable;
-        }
-
-        public void setGrowable(String growable) {
-            this.growable = growable;
-        }
-
-        public float getYaw() {
-            return yaw;
-        }
-
-        public void setYaw(float yaw) {
-            this.yaw = yaw;
-        }
-
-        public float getPitch() {
-            return pitch;
-        }
-
-        public void setPitch(float pitch) {
-            this.pitch = pitch;
-        }
-
-        public double getX() {
-            return x;
-        }
-
-        public void setX(double x) {
-            this.x = x;
-        }
-
-        public double getY() {
-            return y;
-        }
-
-        public void setY(double y) {
-            this.y = y;
-        }
-
-        public double getZ() {
-            return z;
-        }
-
-        public void setZ(double z) {
-            this.z = z;
-        }
+        developable.harvest(player, entity.getLocation());
     }
 
 }

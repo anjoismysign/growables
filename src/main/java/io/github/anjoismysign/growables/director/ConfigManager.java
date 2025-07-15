@@ -1,33 +1,52 @@
 package io.github.anjoismysign.growables.director;
 
-import io.github.anjoismysign.bloblib.annotation.BManager;
-import io.github.anjoismysign.bloblib.entities.ConfigDecorator;
-import io.github.anjoismysign.bloblib.managers.Manager;
-import io.github.anjoismysign.bloblib.managers.ManagerDirector;
+import io.github.anjoismysign.bloblib.entities.GenericManager;
 import io.github.anjoismysign.growables.Growables;
-import org.bukkit.configuration.ConfigurationSection;
+import io.github.anjoismysign.growables.configuration.GrowablesConfiguration;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.Constructor;
 
-public class ConfigManager extends Manager {
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
 
-    private static ConfigManager INSTANCE;
+public class ConfigManager extends GenericManager<Growables, GrowablesManagerDirector> {
+
     private boolean tinyDebug;
+    private GrowablesConfiguration configuration;
 
-    protected ConfigManager(ManagerDirector director){
+    protected ConfigManager(GrowablesManagerDirector director) {
         super(director);
-        INSTANCE = this;
-    }
-
-    public static ConfigManager getInstance() {
-        return INSTANCE;
+        reload();
     }
 
     public void reload() {
-        ConfigDecorator configDecorator = getPlugin().getConfigDecorator();
-        ConfigurationSection settingsSection = configDecorator.reloadAndGetSection("Settings");
-        tinyDebug = settingsSection.getBoolean("Tiny-Debug");
+        Growables plugin = getPlugin();
+        plugin.reloadConfig();
+        plugin.saveDefaultConfig();
+        plugin.getConfig().options().copyDefaults(true);
+        plugin.saveConfig();
+
+        FileConfiguration config = plugin.getConfig();
+        tinyDebug = config.getBoolean("Options.Tiny-Debug", false);
+
+        File hologramConfigFile = new File(plugin.getDataFolder(), "setup.yml");
+        Constructor constructor = new Constructor(GrowablesConfiguration.class, new LoaderOptions());
+        Yaml yaml = new Yaml(constructor);
+        try (FileInputStream inputStream = new FileInputStream(hologramConfigFile)) {
+            configuration = yaml.load(inputStream);
+        } catch (IOException exception) {
+            throw new RuntimeException(exception);
+        }
     }
 
     public boolean tinyDebug() {
         return tinyDebug;
+    }
+
+    public GrowablesConfiguration getConfiguration() {
+        return configuration;
     }
 }

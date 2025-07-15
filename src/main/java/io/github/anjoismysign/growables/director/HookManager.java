@@ -1,31 +1,26 @@
 package io.github.anjoismysign.growables.director;
 
-import io.github.anjoismysign.bloblib.annotation.BManager;
-import io.github.anjoismysign.bloblib.entities.ConfigDecorator;
-import io.github.anjoismysign.bloblib.managers.Manager;
-import org.bukkit.configuration.ConfigurationSection;
+import io.github.anjoismysign.bloblib.entities.GenericManager;
+import io.github.anjoismysign.growables.Growables;
+import io.github.anjoismysign.growables.phatloots.Found;
+import io.github.anjoismysign.growables.phatloots.NotFound;
+import io.github.anjoismysign.growables.phatloots.PhatLootsHook;
+import org.bukkit.Bukkit;
 
-@BManager
-public class ConfigManager extends Manager {
+public class HookManager extends GenericManager<Growables, GrowablesManagerDirector> {
 
-    private static ConfigManager INSTANCE;
-    private boolean tinyDebug;
+    private final PhatLootsHook phatLootsHook;
 
-    public static ConfigManager getInstance() {
-        return INSTANCE;
+    protected HookManager(GrowablesManagerDirector director) {
+        super(director);
+        if (Bukkit.getPluginManager().isPluginEnabled("PhatLoots")){
+            phatLootsHook = new Found();
+        } else {
+            phatLootsHook = new NotFound();
+        }
     }
 
-    public ConfigManager() {
-        INSTANCE = this;
-    }
-
-    public void reload() {
-        ConfigDecorator configDecorator = getPlugin().getConfigDecorator();
-        ConfigurationSection settingsSection = configDecorator.reloadAndGetSection("Settings");
-        tinyDebug = settingsSection.getBoolean("Tiny-Debug");
-    }
-
-    public boolean tinyDebug() {
-        return tinyDebug;
+    public PhatLootsHook getPhatLootsHook() {
+        return phatLootsHook;
     }
 }

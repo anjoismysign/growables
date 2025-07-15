@@ -1,10 +1,9 @@
-name: BlobProperties
-main: io.github.anjoismysign.blobproperties.BlobProperties
+name: Growables
+main: io.github.anjoismysign.growables.Growables
 version: ${project.version}
-authir: [ promorrom ]
 api-version: 1.21.4
 depend: [ BlobLib ]
 commands:
-  properties:
+  growables:
     description: base command
-    aliases: [ bp ]
+    aliases: [ grow ]

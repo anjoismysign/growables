@@ -1,16 +1,15 @@
 package io.github.anjoismysign.growables.director;
 
+import com.google.gson.Gson;
 import io.github.anjoismysign.bloblib.entities.GenericManager;
 import io.github.anjoismysign.bloblib.entities.translatable.TranslatableItem;
-import io.github.anjoismysign.bloblib.managers.PluginManager;
-import io.github.anjoismysign.bloblib.managers.asset.BukkitIdentityManager;
 import io.github.anjoismysign.growables.Growables;
 import io.github.anjoismysign.growables.api.event.DevelopableHarvestEvent;
 import io.github.anjoismysign.growables.entity.Growable;
 import io.github.anjoismysign.growables.entity.GrowableInstance;
+import io.github.anjoismysign.growables.entity.GrowableShard;
 import io.github.anjoismysign.growables.entity.SimpleDevelopable;
 import io.github.anjoismysign.growables.entity.SimpleDirection;
-import io.github.anjoismysign.holoworld.asset.IdentityGeneration;
 import org.bukkit.Bukkit;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
@@ -27,48 +26,87 @@ import org.bukkit.scheduler.BukkitTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 public class GrowableInstanceManager extends GenericManager<Growables, GrowablesManagerDirector> implements Listener {
-    private final BukkitIdentityManager<GrowableInstance> identityManager;
+    private final File shardsDirectory;
+    private final Map<String, GrowableShard> shards;
     private final Set<SimpleDevelopable> developables = new HashSet<>();
-    private final BukkitTask tickTask;
+    private BukkitTask tickTask;
 
     public GrowableInstanceManager(GrowablesManagerDirector director) {
         super(director);
-        identityManager = PluginManager.getInstance().addIdentityManager(GrowableInstance.Info.class, getPlugin(), "GrowableInstance", true);
+        shardsDirectory = new File(director.getPlugin().getDataFolder(), "developable");
+        shards = new HashMap<>();
         Bukkit.getPluginManager().registerEvents(this, getPlugin());
 
-        // schedule a shared random-tick task
-        tickTask = Bukkit.getScheduler().runTaskTimer(getPlugin(), () -> {
-            developables.forEach(SimpleDevelopable::randomTick);
-        }, 0L, 20L);
-
-        // initial load
         Bukkit.getScheduler().runTask(getPlugin(), this::reload);
     }
 
     public void reload() {
-        developables.forEach(SimpleDevelopable::clear);
+        unload();
         developables.clear();
+        tickTask = Bukkit.getScheduler().runTaskTimer(getPlugin(), () -> {
+            developables.forEach(SimpleDevelopable::randomTick);
+        }, 0L, 20L);
         GrowablesManagerDirector director = getManagerDirector();
         director.getStructureTracker().reload();
         director.getGrowableManager().identityManager.reload();
-        identityManager.reload();
-        identityManager.forEach(instance -> {
-            SimpleDevelopable developable = SimpleDevelopable.of(instance);
-            developables.add(developable);
+        if (!shardsDirectory.isDirectory())
+            shardsDirectory.mkdirs();
+        Bukkit.getWorlds().forEach(world -> {
+            String worldName = world.getName();
+            File shardFile = new File(shardsDirectory, worldName+".json");
+            Gson gson = new Gson();
+            if (!shardFile.isFile()){
+                GrowableShard shard = new GrowableShard(worldName, new HashMap<>());
+                try (FileWriter writer = new FileWriter(shardFile)) {
+                    gson.toJson(shard.info(), writer);
+                } catch (IOException exception) {
+                    exception.printStackTrace();
+                }
+                shards.put(worldName, shard);
+            } else {
+                try (FileReader reader = new FileReader(shardFile)){
+                    GrowableShard.Info info = gson.fromJson(reader, GrowableShard.Info.class);
+                    GrowableShard shard = info.generate(worldName);
+                    shards.put(worldName, shard);
+                } catch (IOException exception){
+                    exception.printStackTrace();
+                }
+            }
+        });
+        shards.forEach((worldName, shard)->{
+            shard.instances().forEach((blockvector, instance)->{
+                SimpleDevelopable developable = SimpleDevelopable.of(instance);
+                developables.add(developable);
+            });
         });
     }
 
     public void unload(){
-        // stop the shared task and clear all entities
         if (tickTask != null) {
             tickTask.cancel();
         }
-        developables.forEach(SimpleDevelopable::clear);
+        developables.forEach(SimpleDevelopable::unload);
+        shards.forEach((worldName, shard)->{
+            File shardFile = new File(shardsDirectory, worldName+".json");
+            Gson gson = new Gson();
+            try (FileWriter writer = new FileWriter(shardFile)) {
+                gson.toJson(shard.info(), writer);
+            } catch (IOException exception) {
+                exception.printStackTrace();
+            }
+            shards.put(worldName, shard);
+        });
     }
 
     public void registerDevelopable(@NotNull SimpleDevelopable developable){
@@ -76,18 +114,13 @@ public class GrowableInstanceManager extends GenericManager<Growables, Growables
         developables.add(developable);
     }
 
-    @Nullable
-    public GrowableInstance get(@NotNull String identifier) {
-        var generation = identityManager.fetchGeneration(identifier);
-        if (generation == null)
-            return null;
-        return generation.asset();
-    }
-
     public void serialize(@NotNull GrowableInstance instance) {
         Objects.requireNonNull(instance, "'owner' cannot be null");
         String identifier = instance.identifier();
-        identityManager.add(new IdentityGeneration<>(identifier, instance.info()));
+        String worldName = instance.locatable().getWorld().getName();
+        @Nullable GrowableShard shard = shards.get(worldName);
+        Objects.requireNonNull(shard, "'shard' cannot be null");
+        shard.add(instance);
     }
 
     @EventHandler
@@ -120,6 +153,9 @@ public class GrowableInstanceManager extends GenericManager<Growables, Growables
                 .filter(simpleDevelopable -> simpleDevelopable.getHitbox().getUniqueId().equals(interaction.getUniqueId()))
                 .findFirst().orElse(null);
         if (developable == null) {
+            return;
+        }
+        if (developable.getStageIndex() != developable.getLastStageIndex()){
             return;
         }
         Player player = (Player) event.getDamager();

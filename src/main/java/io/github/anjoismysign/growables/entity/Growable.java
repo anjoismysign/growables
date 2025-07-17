@@ -44,7 +44,8 @@ public record Growable(
                 locatable,
                 this.identifier,
                 identifier,
-                direction
+                direction,
+                new int[] {0}
         );
         GrowableInstanceManager manager = Growables.getInstance().getManagerDirector().getGrowableInstanceManager();
         manager.serialize(instance);

@@ -25,8 +25,13 @@ public record GrowableInstance(
         @NotNull Locatable locatable,
         @NotNull String growable,
         @NotNull String identifier,
-        @NotNull SimpleDirection direction
+        @NotNull SimpleDirection direction,
+        int[] stagePointer
 ) implements DataAsset {
+
+    public int stage(){
+        return stagePointer[0];
+    }
 
     @NotNull
     public Growable getGrowableOrThrow() {
@@ -47,16 +52,16 @@ public record GrowableInstance(
         x.setY((int) locatable.getY());
         x.setZ((int) locatable.getZ());
         x.setDirection(direction);
+        x.setStage(stage());
         return x;
     }
 
-    public static class Info implements IdentityGenerator<GrowableInstance> {
-        private String world, growable;
-        private int x, y, z;
+    public static class Info {
+        private String world, growable, identifier;
+        private int x, y, z, stage;
         private SimpleDirection direction;
 
-        @Override
-        public @NotNull GrowableInstance generate(@NotNull String identifier) {
+        public @NotNull GrowableInstance generate() {
             Objects.requireNonNull(world, "'world' cannot be null");
             Objects.requireNonNull(growable, "'growable' cannot be null");
             Objects.requireNonNull(direction, "'direction' cannot be null");
@@ -97,7 +102,7 @@ public record GrowableInstance(
                 }
             };
 
-            return new GrowableInstance(locatable, growable, identifier, direction);
+            return new GrowableInstance(locatable, growable, identifier, direction, new int[]{stage});
         }
 
         public String getWorld() {
@@ -146,6 +151,22 @@ public record GrowableInstance(
 
         public void setDirection(SimpleDirection direction) {
             this.direction = direction;
+        }
+
+        public int getStage() {
+            return stage;
+        }
+
+        public void setStage(int stage) {
+            this.stage = stage;
+        }
+
+        public String getIdentifier() {
+            return identifier;
+        }
+
+        public void setIdentifier(String identifier) {
+            this.identifier = identifier;
         }
     }
 }

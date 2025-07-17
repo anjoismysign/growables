@@ -29,18 +29,20 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * @param owner        The GrowableInstance that owns this physical representation
  * @param boxPointer   The hitbox, used for harvesting.
- * @param stagePointer The current growth stage.
+ * @param stageIndexPointer The current growth stage.
  */
 public record SimpleDevelopable(
         @NotNull GrowableInstance owner,
         @NotNull Interaction[] boxPointer,
-        @NotNull Stage[] stagePointer,
+        int[] stageIndexPointer,
         @NotNull List<Entity> entities,
         @NotNull Hologram hologram,
         @NotNull Random random
         ) implements Developable {
 
     public static SimpleDevelopable of(@NotNull GrowableInstance instance) {
+        int currentStage = instance.stage();
+
         Location baseLocation = instance.locatable().toLocation().toCenterLocation();
         baseLocation.setY(baseLocation.getBlockY());
         Location hologramLocation = baseLocation.clone();
@@ -52,28 +54,32 @@ public record SimpleDevelopable(
         );
 
         Hologram hologram = Hologram.random(hologramLocation);
-        Growable growableDefinition = instance.getGrowableOrThrow();
-        List<Stage> stages = growableDefinition.stages();
-        Stage initialStage = stages.getLast();
 
         Interaction interaction = (Interaction)
                 baseLocation.getWorld().spawnEntity(baseLocation, EntityType.INTERACTION);
         interaction.setPersistent(false);
 
         Interaction[] boxPointer = new Interaction[]{interaction};
-        Stage[] stagePointer = new Stage[]{initialStage};
+        int[] stageIndexPointer = new int[]{currentStage};
 
         SimpleDevelopable developable = new SimpleDevelopable(
                 instance,
                 boxPointer,
-                stagePointer,
+                stageIndexPointer,
                 new ArrayList<>(),
                 hologram,
                 new Random()
         );
 
-        developable.growToFullStage();
-        hologram.update(developable);
+        int lastStage = developable.getLastStageIndex();
+        if (currentStage == lastStage){
+            developable.growToFullStage();
+            hologram.update(developable);
+        } else {
+            developable.setStage(currentStage);
+            developable.getHitbox().setInteractionHeight(0.00001f);
+            hologram.update(developable);
+        }
         return developable;
     }
 
@@ -111,7 +117,7 @@ public record SimpleDevelopable(
             return;
         }
 
-        Stage current = stagePointer[0];
+        Stage current = owner.getGrowableOrThrow().stages().get(currentIndex);
         int length = current.getLength();
 
         @Nullable Integer randomTickSpeed = owner.locatable().getWorld().getGameRuleValue(GameRule.RANDOM_TICK_SPEED);
@@ -124,7 +130,9 @@ public record SimpleDevelopable(
         }
     }
 
-    public void clear() {
+    public void unload() {
+        owner.stagePointer()[0] = getStageIndex();
+        Growables.getInstance().getManagerDirector().getGrowableInstanceManager().serialize(owner);
         removeEntities();
         getHitbox().remove();
         @Nullable TextDisplay display = hologram.display();
@@ -144,8 +152,7 @@ public record SimpleDevelopable(
     }
 
     public int getStageIndex() {
-        return owner.getGrowableOrThrow()
-                .stages().indexOf(stagePointer[0]);
+        return stageIndexPointer[0];
     }
 
     public boolean advanceOneStage() {
@@ -188,9 +195,10 @@ public record SimpleDevelopable(
 
         removeEntities();
 
+        int eventStage = growEvent.getStage();
         Stage newStage = owner.getGrowableOrThrow()
-                .stages().get(growEvent.getStage());
-        this.stagePointer[0] = newStage;
+                .stages().get(eventStage);
+        stageIndexPointer[0] = eventStage;
 
         placeStructure(newStage, owner, this);
     }

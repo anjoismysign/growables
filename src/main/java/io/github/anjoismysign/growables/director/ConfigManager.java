@@ -24,10 +24,8 @@ public class ConfigManager extends GenericManager<Growables, GrowablesManagerDir
 
     public void reload() {
         Growables plugin = getPlugin();
-        plugin.reloadConfig();
-        plugin.saveDefaultConfig();
-        plugin.getConfig().options().copyDefaults(true);
-        plugin.saveConfig();
+        plugin.saveResource("config.yml", false);
+        plugin.saveResource("setup.yml", false);
 
         FileConfiguration config = plugin.getConfig();
         tinyDebug = config.getBoolean("Options.Tiny-Debug", false);

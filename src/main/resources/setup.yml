@@ -1,0 +1,5 @@
+holograms:
+  y: 0
+  lines:
+    - "&e%progress%"
+  enabled: false
